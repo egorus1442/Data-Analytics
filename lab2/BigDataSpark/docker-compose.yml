@@ -1,0 +1,188 @@
+version: "3.8"
+
+networks:
+  bigdata:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  clickhouse_data:
+  cassandra_data:
+  neo4j_data:
+  mongodb_data:
+  valkey_data:
+
+services:
+
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    environment:
+      POSTGRES_USER: spark
+      POSTGRES_PASSWORD: spark
+      POSTGRES_DB: sparkdb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./исходные данные:/data/mock_data:ro
+      - ./init/postgres:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - bigdata
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spark -d sparkdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  spark-master:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    volumes:
+      - ./jobs:/opt/spark-jobs
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+    networks:
+      - bigdata
+
+  spark-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    container_name: spark-worker
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    volumes:
+      - ./jobs:/opt/spark-jobs
+    depends_on:
+      - spark-master
+    networks:
+      - bigdata
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    container_name: clickhouse
+    environment:
+      CLICKHOUSE_USER: spark
+      CLICKHOUSE_PASSWORD: spark
+      CLICKHOUSE_DB: sparkdb
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./init/clickhouse:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    networks:
+      - bigdata
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8123/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+  cassandra:
+    image: cassandra:4.1
+    container_name: cassandra
+    environment:
+      - CASSANDRA_CLUSTER_NAME=SparkCluster
+      - CASSANDRA_DC=dc1
+      - CASSANDRA_RACK=rack1
+      - HEAP_NEWSIZE=128M
+      - MAX_HEAP_SIZE=512M
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    ports:
+      - "9042:9042"
+    networks:
+      - bigdata
+    healthcheck:
+      test: ["CMD-SHELL", "nodetool status | grep -q UN"]
+      interval: 30s
+      timeout: 15s
+      retries: 15
+
+  cassandra-init:
+    image: cassandra:4.1
+    container_name: cassandra-init
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    volumes:
+      - ./init/cassandra:/init:ro
+    command: cqlsh cassandra -f /init/01_init.cql
+    networks:
+      - bigdata
+    restart: on-failure
+
+  neo4j:
+    image: neo4j:5.18
+    container_name: neo4j
+    environment:
+      NEO4J_AUTH: neo4j/spark_password
+      NEO4J_PLUGINS: '["apoc"]'
+    volumes:
+      - neo4j_data:/data
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    networks:
+      - bigdata
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+
+  mongodb:
+    image: mongo:7
+    container_name: mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: spark
+      MONGO_INITDB_ROOT_PASSWORD: spark
+    volumes:
+      - mongodb_data:/data/db
+    ports:
+      - "27017:27017"
+    networks:
+      - bigdata
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  valkey:
+    image: valkey/valkey:7.2
+    container_name: valkey
+    volumes:
+      - valkey_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - bigdata
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
