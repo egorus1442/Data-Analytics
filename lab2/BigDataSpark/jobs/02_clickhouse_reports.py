@@ -1,6 +1,7 @@
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
+import clickhouse_connect
 
 PG_URL = "jdbc:postgresql://postgres:5432/sparkdb"
 PG_PROPS = {
@@ -9,29 +10,30 @@ PG_PROPS = {
     "driver": "org.postgresql.Driver",
 }
 
-CH_DB = "sparkdb"
+CH_HOST = "clickhouse"
+CH_PORT = 8123
+CH_USER = "spark"
+CH_PASS = "spark"
+CH_DB   = "sparkdb"
 
 
 def read_pg(spark, table):
     return spark.read.jdbc(url=PG_URL, table=table, properties=PG_PROPS)
 
 
-def write_ch(df, table):
-    df.writeTo(f"clickhouse.{CH_DB}.{table}").createOrReplace()
+def write_ch(df, table, create_sql):
+    client = clickhouse_connect.get_client(
+        host=CH_HOST, port=CH_PORT,
+        username=CH_USER, password=CH_PASS,
+        database=CH_DB,
+    )
+    client.command(f"DROP TABLE IF EXISTS {CH_DB}.{table}")
+    client.command(create_sql)
+    pdf = df.toPandas()
+    client.insert_df(table, pdf, database=CH_DB)
 
 
-spark = (
-    SparkSession.builder
-    .appName("ClickHouseReports")
-    .config("spark.sql.catalog.clickhouse", "com.clickhouse.spark.ClickHouseCatalog")
-    .config("spark.sql.catalog.clickhouse.host", "clickhouse")
-    .config("spark.sql.catalog.clickhouse.protocol", "http")
-    .config("spark.sql.catalog.clickhouse.http_port", "8123")
-    .config("spark.sql.catalog.clickhouse.user", "spark")
-    .config("spark.sql.catalog.clickhouse.password", "spark")
-    .config("spark.sql.catalog.clickhouse.database", CH_DB)
-    .getOrCreate()
-)
+spark = SparkSession.builder.appName("ClickHouseReports").getOrCreate()
 
 fact         = read_pg(spark, "fact_sales")
 dim_product  = read_pg(spark, "dim_product")
@@ -60,7 +62,7 @@ report1 = (
         F.sum("total_price").alias("total_revenue"),
     )
     .withColumn("category_total_revenue", F.sum("total_revenue").over(w_cat))
-    .withColumn("sales_rank", F.rank().over(w_qty))
+    .withColumn("sales_rank", F.rank().over(w_qty).cast("int"))
     .select(
         "product_id", "product_name", "category",
         "total_quantity_sold", "total_revenue",
@@ -69,7 +71,19 @@ report1 = (
         "category_total_revenue", "sales_rank",
     )
 )
-write_ch(report1, "report_products_sales")
+write_ch(report1, "report_products_sales", """
+    CREATE TABLE sparkdb.report_products_sales (
+        product_id             Int32,
+        product_name           String,
+        category               String,
+        total_quantity_sold    Int64,
+        total_revenue          Float64,
+        avg_rating             Float64,
+        total_reviews          Int64,
+        category_total_revenue Float64,
+        sales_rank             Int32
+    ) ENGINE = MergeTree() ORDER BY product_id
+""")
 
 # -------------------------------------------------------------------
 # Report 2: Витрина продаж по клиентам
@@ -91,9 +105,21 @@ report2 = (
         F.avg("total_price").alias("avg_order_value"),
     )
     .withColumn("customers_in_country", F.count("customer_id").over(w_country))
-    .withColumn("customer_rank", F.rank().over(w_spent))
+    .withColumn("customer_rank", F.rank().over(w_spent).cast("int"))
 )
-write_ch(report2, "report_customers_sales")
+write_ch(report2, "report_customers_sales", """
+    CREATE TABLE sparkdb.report_customers_sales (
+        customer_id          Int32,
+        first_name           String,
+        last_name            String,
+        country              String,
+        total_spent          Float64,
+        order_count          Int64,
+        avg_order_value      Float64,
+        customers_in_country Int64,
+        customer_rank        Int32
+    ) ENGINE = MergeTree() ORDER BY customer_id
+""")
 
 # -------------------------------------------------------------------
 # Report 3: Витрина продаж по времени
@@ -108,7 +134,15 @@ report3 = (
     )
     .orderBy("year", "month")
 )
-write_ch(report3, "report_time_sales")
+write_ch(report3, "report_time_sales", """
+    CREATE TABLE sparkdb.report_time_sales (
+        year            Int32,
+        month           Int32,
+        total_revenue   Float64,
+        total_orders    Int64,
+        avg_order_value Float64
+    ) ENGINE = MergeTree() ORDER BY (year, month)
+""")
 
 # -------------------------------------------------------------------
 # Report 4: Витрина продаж по магазинам
@@ -123,9 +157,20 @@ report4 = (
         F.count("*").alias("total_orders"),
         F.avg("total_price").alias("avg_order_value"),
     )
-    .withColumn("store_rank", F.rank().over(w_store))
+    .withColumn("store_rank", F.rank().over(w_store).cast("int"))
 )
-write_ch(report4, "report_stores_sales")
+write_ch(report4, "report_stores_sales", """
+    CREATE TABLE sparkdb.report_stores_sales (
+        store_id        Int32,
+        store_name      String,
+        store_city      String,
+        store_country   String,
+        total_revenue   Float64,
+        total_orders    Int64,
+        avg_order_value Float64,
+        store_rank      Int32
+    ) ENGINE = MergeTree() ORDER BY store_id
+""")
 
 # -------------------------------------------------------------------
 # Report 5: Витрина продаж по поставщикам
@@ -145,9 +190,19 @@ report5 = (
         F.avg(dim_product["price"]).alias("avg_product_price"),
         F.count("*").alias("total_orders"),
     )
-    .withColumn("supplier_rank", F.rank().over(w_sup))
+    .withColumn("supplier_rank", F.rank().over(w_sup).cast("int"))
 )
-write_ch(report5, "report_suppliers_sales")
+write_ch(report5, "report_suppliers_sales", """
+    CREATE TABLE sparkdb.report_suppliers_sales (
+        supplier_id       Int32,
+        supplier_name     String,
+        supplier_country  String,
+        total_revenue     Float64,
+        avg_product_price Float64,
+        total_orders      Int64,
+        supplier_rank     Int32
+    ) ENGINE = MergeTree() ORDER BY supplier_id
+""")
 
 # -------------------------------------------------------------------
 # Report 6: Витрина качества продукции
@@ -173,8 +228,19 @@ report6 = (
         F.col("reviews").cast("long").alias("review_count"),
         "total_quantity_sold", "total_revenue",
     )
-    .withColumn("quality_rank", F.rank().over(w_qual))
+    .withColumn("quality_rank", F.rank().over(w_qual).cast("int"))
 )
-write_ch(report6, "report_product_quality")
+write_ch(report6, "report_product_quality", """
+    CREATE TABLE sparkdb.report_product_quality (
+        product_id          Int32,
+        product_name        String,
+        category            String,
+        rating              Float64,
+        review_count        Int64,
+        total_quantity_sold Int64,
+        total_revenue       Float64,
+        quality_rank        Int32
+    ) ENGINE = MergeTree() ORDER BY product_id
+""")
 
 spark.stop()

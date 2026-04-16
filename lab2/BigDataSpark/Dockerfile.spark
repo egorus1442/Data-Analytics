@@ -1,4 +1,11 @@
-FROM bitnami/spark:3.5
-USER root
-RUN pip install redis
-USER 1001
+FROM python:3.11-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends default-jre-headless procps && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir pyspark==3.5.3 redis clickhouse-connect pandas
+
+WORKDIR /opt/spark-jobs
+
+CMD ["tail", "-f", "/dev/null"]

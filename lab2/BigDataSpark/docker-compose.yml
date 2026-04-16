@@ -35,43 +35,16 @@ services:
       timeout: 5s
       retries: 10
 
-  spark-master:
+  spark:
     build:
       context: .
       dockerfile: Dockerfile.spark
-    container_name: spark-master
-    environment:
-      - SPARK_MODE=master
-      - SPARK_RPC_AUTHENTICATION_ENABLED=no
-      - SPARK_RPC_ENCRYPTION_ENABLED=no
-      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
-      - SPARK_SSL_ENABLED=no
-    volumes:
-      - ./jobs:/opt/spark-jobs
-    ports:
-      - "8080:8080"
-      - "7077:7077"
-    networks:
-      - bigdata
-
-  spark-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.spark
-    container_name: spark-worker
-    environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_WORKER_MEMORY=2G
-      - SPARK_WORKER_CORES=2
-      - SPARK_RPC_AUTHENTICATION_ENABLED=no
-      - SPARK_RPC_ENCRYPTION_ENABLED=no
-      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
-      - SPARK_SSL_ENABLED=no
+    container_name: spark
     volumes:
       - ./jobs:/opt/spark-jobs
     depends_on:
-      - spark-master
+      postgres:
+        condition: service_healthy
     networks:
       - bigdata
 
@@ -85,7 +58,6 @@ services:
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
     volumes:
       - clickhouse_data:/var/lib/clickhouse
-      - ./init/clickhouse:/docker-entrypoint-initdb.d:ro
     ports:
       - "8123:8123"
       - "9000:9000"

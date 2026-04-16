@@ -28,12 +28,12 @@ docker-compose ps
 
 ## 2. Spark-джобы
 
+Spark запускается в режиме `local[*]` внутри контейнера `spark`.
+
 ### Переменные (для удобства)
 
 ```bash
-MASTER="spark://spark-master:7077"
 PG_PKG="org.postgresql:postgresql:42.7.3"
-CH_PKG="com.clickhouse.spark:clickhouse-spark-runtime-3.5_2.12:0.8.0"
 CAS_PKG="com.datastax.spark:spark-cassandra-connector_2.12:3.5.0"
 NEO_PKG="org.neo4j:neo4j-connector-apache-spark_2.12:5.3.2_for_spark_3"
 MDB_PKG="org.mongodb.spark:mongo-spark-connector_2.12:10.4.0"
@@ -44,9 +44,9 @@ MDB_PKG="org.mongodb.spark:mongo-spark-connector_2.12:10.4.0"
 ### Джоб 1 — ETL в модель «звезда» (PostgreSQL → PostgreSQL)
 
 ```bash
-docker exec spark-master spark-submit \
-  --master $MASTER \
-  --packages $PG_PKG \
+docker exec spark spark-submit \
+  --master "local[*]" \
+  --packages "org.postgresql:postgresql:42.7.3" \
   /opt/spark-jobs/01_star_schema.py
 ```
 
@@ -58,9 +58,9 @@ docker exec spark-master spark-submit \
 ### Джоб 2 — Отчёты в ClickHouse (обязательно)
 
 ```bash
-docker exec spark-master spark-submit \
-  --master $MASTER \
-  --packages "$PG_PKG,$CH_PKG" \
+docker exec spark spark-submit \
+  --master "local[*]" \
+  --packages "org.postgresql:postgresql:42.7.3" \
   /opt/spark-jobs/02_clickhouse_reports.py
 ```
 
@@ -68,14 +68,16 @@ docker exec spark-master spark-submit \
 `report_products_sales`, `report_customers_sales`, `report_time_sales`,
 `report_stores_sales`, `report_suppliers_sales`, `report_product_quality`.
 
+> Отчёты записываются через `clickhouse-connect` (HTTP API), без дополнительных JAR.
+
 ---
 
 ### Джоб 3 — Отчёты в Cassandra (опционально)
 
 ```bash
-docker exec spark-master spark-submit \
-  --master $MASTER \
-  --packages "$PG_PKG,$CAS_PKG" \
+docker exec spark spark-submit \
+  --master "local[*]" \
+  --packages "org.postgresql:postgresql:42.7.3,com.datastax.spark:spark-cassandra-connector_2.12:3.5.0" \
   --conf "spark.cassandra.connection.host=cassandra" \
   /opt/spark-jobs/03_cassandra_reports.py
 ```
@@ -87,9 +89,9 @@ docker exec spark-master spark-submit \
 ### Джоб 4 — Отчёты в Neo4j (опционально)
 
 ```bash
-docker exec spark-master spark-submit \
-  --master $MASTER \
-  --packages "$PG_PKG,$NEO_PKG" \
+docker exec spark spark-submit \
+  --master "local[*]" \
+  --packages "org.postgresql:postgresql:42.7.3,org.neo4j:neo4j-connector-apache-spark_2.12:5.3.2_for_spark_3" \
   /opt/spark-jobs/04_neo4j_reports.py
 ```
 
@@ -102,9 +104,9 @@ docker exec spark-master spark-submit \
 ### Джоб 5 — Отчёты в MongoDB (опционально)
 
 ```bash
-docker exec spark-master spark-submit \
-  --master $MASTER \
-  --packages "$PG_PKG,$MDB_PKG" \
+docker exec spark spark-submit \
+  --master "local[*]" \
+  --packages "org.postgresql:postgresql:42.7.3,org.mongodb.spark:mongo-spark-connector_2.12:10.4.0" \
   /opt/spark-jobs/05_mongodb_reports.py
 ```
 
@@ -115,9 +117,9 @@ docker exec spark-master spark-submit \
 ### Джоб 6 — Отчёты в Valkey (опционально)
 
 ```bash
-docker exec spark-master spark-submit \
-  --master $MASTER \
-  --packages "$PG_PKG" \
+docker exec spark spark-submit \
+  --master "local[*]" \
+  --packages "org.postgresql:postgresql:42.7.3" \
   /opt/spark-jobs/06_valkey_reports.py
 ```
 
@@ -147,7 +149,7 @@ USE sparkdb;
 SELECT * FROM report_products_sales LIMIT 10;
 ```
 
-### Neo4j (Cipher — DBeaver или браузер http://localhost:7474)
+### Neo4j (Cypher — DBeaver или браузер http://localhost:7474)
 
 Логин `neo4j` / `spark_password`.
 

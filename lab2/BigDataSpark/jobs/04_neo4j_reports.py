@@ -18,7 +18,16 @@ def read_pg(spark, table):
     return spark.read.jdbc(url=PG_URL, table=table, properties=PG_PROPS)
 
 
+def cast_decimals(df):
+    from pyspark.sql.types import DecimalType
+    for field in df.schema.fields:
+        if isinstance(field.dataType, DecimalType):
+            df = df.withColumn(field.name, F.col(field.name).cast("double"))
+    return df
+
+
 def write_neo4j(df, label, node_keys):
+    df = cast_decimals(df)
     (
         df.write
         .format("org.neo4j.spark.DataSource")
@@ -59,10 +68,10 @@ report1 = (
     )
     .agg(
         F.sum("quantity").alias("total_quantity_sold"),
-        F.sum("total_price").alias("total_revenue"),
+        F.sum("total_price").cast("double").alias("total_revenue"),
     )
     .withColumn("category_total_revenue", F.sum("total_revenue").over(w_cat))
-    .withColumn("sales_rank", F.rank().over(w_qty))
+    .withColumn("sales_rank", F.rank().over(w_qty).cast("int"))
     .select(
         "product_id", "product_name", "category",
         "total_quantity_sold", "total_revenue",
@@ -88,12 +97,12 @@ report2 = (
         dim_customer["country"],
     )
     .agg(
-        F.sum("total_price").alias("total_spent"),
+        F.sum("total_price").cast("double").alias("total_spent"),
         F.count("*").alias("order_count"),
-        F.avg("total_price").alias("avg_order_value"),
+        F.avg("total_price").cast("double").alias("avg_order_value"),
     )
     .withColumn("customers_in_country", F.count("customer_id").over(w_country))
-    .withColumn("customer_rank", F.rank().over(w_spent))
+    .withColumn("customer_rank", F.rank().over(w_spent).cast("int"))
 )
 write_neo4j(report2, "ReportCustomersSales", "customer_id")
 
@@ -104,9 +113,9 @@ report3 = (
     fact.join(dim_date, "date_id")
     .groupBy("year", "month")
     .agg(
-        F.sum("total_price").alias("total_revenue"),
+        F.sum("total_price").cast("double").alias("total_revenue"),
         F.count("*").alias("total_orders"),
-        F.avg("total_price").alias("avg_order_value"),
+        F.avg("total_price").cast("double").alias("avg_order_value"),
     )
     .orderBy("year", "month")
 )
@@ -121,11 +130,11 @@ report4 = (
     fact.join(dim_store, "store_id")
     .groupBy("store_id", "store_name", "store_city", "store_country")
     .agg(
-        F.sum("total_price").alias("total_revenue"),
+        F.sum("total_price").cast("double").alias("total_revenue"),
         F.count("*").alias("total_orders"),
-        F.avg("total_price").alias("avg_order_value"),
+        F.avg("total_price").cast("double").alias("avg_order_value"),
     )
-    .withColumn("store_rank", F.rank().over(w_store))
+    .withColumn("store_rank", F.rank().over(w_store).cast("int"))
 )
 write_neo4j(report4, "ReportStoresSales", "store_id")
 
@@ -143,11 +152,11 @@ report5 = (
         dim_supplier["supplier_country"],
     )
     .agg(
-        F.sum("total_price").alias("total_revenue"),
-        F.avg(dim_product["price"]).alias("avg_product_price"),
+        F.sum("total_price").cast("double").alias("total_revenue"),
+        F.avg(dim_product["price"]).cast("double").alias("avg_product_price"),
         F.count("*").alias("total_orders"),
     )
-    .withColumn("supplier_rank", F.rank().over(w_sup))
+    .withColumn("supplier_rank", F.rank().over(w_sup).cast("int"))
 )
 write_neo4j(report5, "ReportSuppliersSales", "supplier_id")
 
@@ -167,7 +176,7 @@ report6 = (
     )
     .agg(
         F.sum("quantity").alias("total_quantity_sold"),
-        F.sum("total_price").alias("total_revenue"),
+        F.sum("total_price").cast("double").alias("total_revenue"),
     )
     .select(
         "product_id", "product_name", "category",
@@ -175,7 +184,7 @@ report6 = (
         F.col("reviews").cast("long").alias("review_count"),
         "total_quantity_sold", "total_revenue",
     )
-    .withColumn("quality_rank", F.rank().over(w_qual))
+    .withColumn("quality_rank", F.rank().over(w_qual).cast("int"))
 )
 write_neo4j(report6, "ReportProductQuality", "product_id")
 

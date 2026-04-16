@@ -61,7 +61,7 @@ BigDataSpark/
 ├── исходные данные/            # 10 CSV-файлов (10 000 строк)
 ├── init/
 │   ├── postgres/               # SQL-скрипт создания таблицы и загрузки CSV
-│   └── cassandra/              # CQL-скрипт создания keyspace и таблиц
+│   └── cassandra/              # CQL-скрипт создания keyspace и 6 таблиц
 └── jobs/
     ├── 01_star_schema.py       # ETL: плоская таблица → модель звезда
     ├── 02_clickhouse_reports.py
@@ -84,14 +84,14 @@ cd BigDataSpark
 docker-compose up -d --build
 
 # ETL в модель звезда
-docker exec spark-master spark-submit \
-  --master spark://spark-master:7077 \
-  --packages org.postgresql:postgresql:42.7.3 \
+docker exec spark spark-submit \
+  --master "local[*]" \
+  --packages "org.postgresql:postgresql:42.7.3" \
   /opt/spark-jobs/01_star_schema.py
 
 # Отчёты в ClickHouse
-docker exec spark-master spark-submit \
-  --master spark://spark-master:7077 \
-  --packages "org.postgresql:postgresql:42.7.3,com.clickhouse.spark:clickhouse-spark-runtime-3.5_2.12:0.8.0" \
+docker exec spark spark-submit \
+  --master "local[*]" \
+  --packages "org.postgresql:postgresql:42.7.3" \
   /opt/spark-jobs/02_clickhouse_reports.py
 ```
